@@ -9,42 +9,37 @@ on:
 permissions:
   contents: read
 
+env:
+  CI: true
+
 jobs:
   build-android:
-    name: Build Android debug APK
+    name: Build Android standalone APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-
+    timeout-minutes: 45
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract project ZIP
+      - name: Find and extract project ZIP
         shell: bash
         run: |
           set -euo pipefail
           ZIP_FILE="$(find . -maxdepth 2 -type f -iname '*.zip' -not -path './.git/*' | head -n 1 || true)"
-
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: File ZIP tidak ditemukan di root repository."
+            echo "ERROR: ZIP source tidak ditemukan di root repository."
             exit 1
           fi
-
           rm -rf "$GITHUB_WORKSPACE/.build-source"
           mkdir -p "$GITHUB_WORKSPACE/.build-source"
           unzip -q "$ZIP_FILE" -d "$GITHUB_WORKSPACE/.build-source"
-
           PACKAGE_JSON="$(find "$GITHUB_WORKSPACE/.build-source" -type f -name package.json -not -path '*/node_modules/*' | head -n 1 || true)"
           if [ -z "$PACKAGE_JSON" ]; then
             echo "ERROR: package.json tidak ditemukan di dalam ZIP."
             exit 1
           fi
-
           PROJECT_DIR="$(dirname "$PACKAGE_JSON")"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Project ditemukan di: $PROJECT_DIR"
-          test -d "$PROJECT_DIR/app" || echo "Peringatan: folder app tidak ditemukan."
-          ls -la "$PROJECT_DIR"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -58,7 +53,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: ${{ env.PROJECT_DIR }}/pnpm-lock.yaml
 
-      - name: Install dependencies
+      - name: Install JavaScript dependencies
         working-directory: ${{ env.PROJECT_DIR }}
         run: pnpm install --frozen-lockfile
 
@@ -72,21 +67,25 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Generate Android project
+      - name: Generate Android project if needed
         working-directory: ${{ env.PROJECT_DIR }}
-        run: npx expo prebuild --platform android --no-install --non-interactive
-
-      - name: Build debug APK
-        working-directory: ${{ env.PROJECT_DIR }}/android
         run: |
-          chmod +x ./gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          if [ ! -f android/gradlew ]; then
+            npx expo prebuild --platform android --no-install --non-interactive
+          fi
 
-      - name: Upload APK
+      - name: Make Gradle executable
+        working-directory: ${{ env.PROJECT_DIR }}/android
+        run: chmod +x ./gradlew
+
+      - name: Build standalone release APK
+        working-directory: ${{ env.PROJECT_DIR }}/android
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Upload standalone APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kamera-ai-gratis-debug-apk
-          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          name: kamera-ai-gratis-standalone-apk
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 7
-
